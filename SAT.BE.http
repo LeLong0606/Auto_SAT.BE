@@ -1,0 +1,6 @@
+@SAT.BE_HostAddress = http://localhost:5283
+
+GET {{SAT.BE_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
