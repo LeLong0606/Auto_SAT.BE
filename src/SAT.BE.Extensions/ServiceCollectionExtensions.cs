@@ -3,6 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using SAT.BE.src.SAT.BE.Domain.Entities.Authentication;
 using SAT.BE.src.SAT.BE.Domain.Entities.Identity;
 using SAT.BE.src.SAT.BE.Infrastructure.Data;
+using SAT.BE.src.SAT.BE.Application.Mappings;
+using SAT.BE.src.SAT.BE.Domain.Interfaces;
+using SAT.BE.src.SAT.BE.Infrastructure.Repositories;
 
 namespace SAT.BE.src.SAT.BE.Extensions
 {
@@ -43,6 +46,12 @@ namespace SAT.BE.src.SAT.BE.Extensions
 
             // JWT Settings
             services.Configure<JwtSettings>(configuration.GetSection("JwtSettings"));
+
+            // Add AutoMapper
+            services.AddAutoMapper(typeof(MappingProfile));
+
+            // Add Repositories
+            services.AddScoped<IEmployeeRepository, EmployeeRepository>();
 
             return services;
         }

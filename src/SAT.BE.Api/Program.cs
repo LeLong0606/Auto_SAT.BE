@@ -9,28 +9,33 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container
 builder.Services.AddControllers();
 
-// Add Infrastructure services (DbContext, Identity, JWT)
+// Add Infrastructure services (DbContext, Identity, JWT, etc.)
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// Configure API Explorer
+// Add Swagger / OpenAPI configuration
 builder.Services.AddEndpointsApiExplorer();
 
-// Configure Swagger/OpenAPI
 builder.Services.AddSwaggerGen(options =>
 {
+    // Correct versioning for OpenAPI
     options.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "SAT.BE API",
-        Version = "v1",
+        Version = "1.0.0", // <- This is the API version, not the OpenAPI version
         Description = "Staff Attendance Tracking Backend API",
         Contact = new OpenApiContact
         {
-            Name = "SAT.BE Team",
-            Email = "support@sat.be"
+            Name = "SAT.BE Development Team",
+            Email = "dev@satbe.com"
+        },
+        License = new OpenApiLicense
+        {
+            Name = "MIT License",
+            Url = new Uri("https://opensource.org/licenses/MIT")
         }
     });
 
-    // Add JWT Authentication to Swagger
+    // JWT Bearer Auth support
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -38,7 +43,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter 'Bearer' [space] and then your valid token in the text input below.\n\nExample: \"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\""
+        Description = "JWT Authorization header using the Bearer scheme. Example: 'Bearer {token}'"
     });
 
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -56,16 +61,18 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 
-    // Include XML comments if available
-    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    // Optional: XML Comments
+    var xmlFilename = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFilename);
     if (File.Exists(xmlPath))
     {
         options.IncludeXmlComments(xmlPath);
     }
+
+    options.EnableAnnotations();
 });
 
-// Add CORS
+// Add CORS policies
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -84,108 +91,97 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Add logging
+// Logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
+// DEVELOPMENT ONLY: Swagger, Database Init
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
+    app.UseDeveloperExceptionPage();
+
+    // Enable Swagger
+    app.UseSwagger(); // <- This automatically generates JSON with "openapi": "3.0.1"
     app.UseSwaggerUI(options =>
     {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "SAT.BE API v1");
-        options.RoutePrefix = string.Empty; // Set Swagger UI at app's root
-        options.DefaultModelsExpandDepth(-1); // Hide schemas section
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "SAT.BE API v1.0.0");
+        options.RoutePrefix = "swagger";
+        options.DocumentTitle = "SAT.BE API Documentation";
+        options.DefaultModelsExpandDepth(-1);
         options.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None);
+        options.DisplayRequestDuration();
+        options.EnableTryItOutByDefault();
+        options.EnableDeepLinking();
     });
 
-    // Auto-apply migrations and seed data in Development
-    using (var scope = app.Services.CreateScope())
+    // Auto DB Migration & Seeding
+    try
     {
+        using var scope = app.Services.CreateScope();
         var services = scope.ServiceProvider;
         var logger = services.GetRequiredService<ILogger<Program>>();
+        var dbContext = services.GetRequiredService<ApplicationDbContext>();
 
-        try
-        {
-            var context = services.GetRequiredService<ApplicationDbContext>();
-
-            // Apply migrations
-            logger.LogInformation("Applying database migrations...");
-            await context.Database.MigrateAsync();
-            logger.LogInformation("Database migrations applied successfully.");
-
-            // Seed initial data
-            await DbMigrationHelper.SeedDataAsync(context, logger);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "An error occurred while initializing the database.");
-            // Don't throw in development - let app continue
-        }
+        logger.LogInformation("Applying migrations...");
+        await dbContext.Database.MigrateAsync();
+        await DbMigrationHelper.SeedDataAsync(dbContext, logger);
+        logger.LogInformation("Database initialized.");
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Database initialization failed.");
     }
 }
 else
 {
-    // Production error handling
     app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
 
-// Security headers
-app.Use(async (context, next) =>
-{
-    context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.Add("X-Frame-Options", "DENY");
-    context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
-    context.Response.Headers.Add("Referrer-Policy", "strict-origin-when-cross-origin");
-    await next();
-});
-
+// Global Middleware
 app.UseHttpsRedirection();
-
-// CORS - Must be before Authentication
 app.UseCors(app.Environment.IsDevelopment() ? "Development" : "AllowAll");
-
-// Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Custom middleware for request logging
+// Request logging middleware
 app.Use(async (context, next) =>
 {
     var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation("Request: {Method} {Path} from {RemoteIpAddress}",
-        context.Request.Method,
-        context.Request.Path,
-        context.Connection.RemoteIpAddress);
-
+    logger.LogInformation("Request: {Method} {Path}", context.Request.Method, context.Request.Path);
     await next();
 });
 
-// Map controllers
+// Controller routing
 app.MapControllers();
 
 // Health check endpoint
-app.MapGet("/health", () => new
+app.MapGet("/health", () => Results.Ok(new
 {
-    Status = "Healthy",
-    Timestamp = DateTime.UtcNow,
-    Environment = app.Environment.EnvironmentName,
-    Version = Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-});
+    status = "Healthy",
+    timestamp = DateTime.UtcNow,
+    environment = app.Environment.EnvironmentName,
+    version = "1.0.0"
+}))
+.WithName("HealthCheck")
+.WithTags("Health");
 
-// Root endpoint
-app.MapGet("/", () => new
+// Root info endpoint
+app.MapGet("/", () => Results.Ok(new
 {
-    Message = "SAT.BE API is running",
-    Environment = app.Environment.EnvironmentName,
-    Timestamp = DateTime.UtcNow,
-    Swagger = "/swagger",
-    Health = "/health"
-});
+    message = "SAT.BE API is running successfully!",
+    version = "1.0.0",
+    environment = app.Environment.EnvironmentName,
+    timestamp = DateTime.UtcNow,
+    documentation = "/swagger",
+    health = "/health",
+    openApiSpec = "/swagger/v1/swagger.json"
+}))
+.WithName("ApiRoot")
+.WithTags("Information");
 
 app.Run();
