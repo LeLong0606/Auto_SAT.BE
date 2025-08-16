@@ -1,11 +1,16 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using SAT.BE.src.SAT.BE.Domain.Entities.Authentication;
 using SAT.BE.src.SAT.BE.Domain.Entities.Identity;
 using SAT.BE.src.SAT.BE.Infrastructure.Data;
 using SAT.BE.src.SAT.BE.Application.Mappings;
 using SAT.BE.src.SAT.BE.Domain.Interfaces;
 using SAT.BE.src.SAT.BE.Infrastructure.Repositories;
+using SAT.BE.src.SAT.BE.Application.Services.Interfaces;
+using SAT.BE.src.SAT.BE.Application.Services.Implementation;
 
 namespace SAT.BE.src.SAT.BE.Extensions
 {
@@ -47,8 +52,34 @@ namespace SAT.BE.src.SAT.BE.Extensions
             // JWT Settings
             services.Configure<JwtSettings>(configuration.GetSection("JwtSettings"));
 
+            // JWT Authentication
+            var jwtSettings = configuration.GetSection("JwtSettings").Get<JwtSettings>();
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = jwtSettings?.ValidateIssuer ?? true,
+                    ValidateAudience = jwtSettings?.ValidateAudience ?? true,
+                    ValidateLifetime = jwtSettings?.ValidateLifetime ?? true,
+                    ValidateIssuerSigningKey = jwtSettings?.ValidateIssuerSigningKey ?? true,
+                    ValidIssuer = jwtSettings?.Issuer,
+                    ValidAudience = jwtSettings?.Audience,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings?.SecretKey ?? "default-secret-key")),
+                    ClockSkew = TimeSpan.Zero
+                };
+            });
+
             // Add AutoMapper
             services.AddAutoMapper(typeof(MappingProfile));
+
+            // Add Services
+            services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IJwtTokenService, JwtTokenService>();
 
             // Add Repositories
             services.AddScoped<IEmployeeRepository, EmployeeRepository>();

@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using SAT.BE.src.SAT.BE.Domain.Entities.HR;
 using SAT.BE.src.SAT.BE.Domain.Entities.Identity;
 using SAT.BE.src.SAT.BE.Domain.Entities.Scheduling;
-using Microsoft.AspNetCore.Identity;
 
 namespace SAT.BE.src.SAT.BE.Infrastructure.Data
 {
@@ -13,6 +13,9 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
             try
             {
                 logger.LogInformation("Starting database seeding...");
+
+                // Seed Roles
+                await SeedRolesAsync(context, logger);
 
                 // Seed Departments
                 if (!await context.Departments.AnyAsync())
@@ -56,6 +59,185 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
             {
                 logger.LogError(ex, "An error occurred while seeding the database.");
                 throw;
+            }
+        }
+
+        public static async Task SeedRolesAndAdminAsync(IServiceProvider serviceProvider, ILogger logger)
+        {
+            try
+            {
+                using var scope = serviceProvider.CreateScope();
+                var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<ApplicationRole>>();
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+                var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                logger.LogInformation("Starting roles and admin user seeding...");
+
+                // Create roles
+                var roles = new[] { "SuperAdmin", "Admin", "Manager", "HR", "Employee", "User" };
+
+                foreach (var roleName in roles)
+                {
+                    var roleExists = await roleManager.RoleExistsAsync(roleName);
+                    if (!roleExists)
+                    {
+                        var role = new ApplicationRole
+                        {
+                            Name = roleName,
+                            Description = $"{roleName} role with appropriate permissions",
+                            IsActive = true,
+                            CreatedDate = DateTime.UtcNow
+                        };
+
+                        var result = await roleManager.CreateAsync(role);
+                        if (result.Succeeded)
+                        {
+                            logger.LogInformation("Role {RoleName} created successfully", roleName);
+                        }
+                        else
+                        {
+                            logger.LogError("Failed to create role {RoleName}: {Errors}", roleName, string.Join(", ", result.Errors.Select(e => e.Description)));
+                        }
+                    }
+                }
+
+                // Create default admin user
+                var adminEmail = "admin@satbe.com";
+                var adminUser = await userManager.FindByEmailAsync(adminEmail);
+
+                if (adminUser == null)
+                {
+                    adminUser = new ApplicationUser
+                    {
+                        UserName = adminEmail,
+                        Email = adminEmail,
+                        FullName = "System Administrator",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow,
+                        EmailConfirmed = true
+                    };
+
+                    var result = await userManager.CreateAsync(adminUser, "Admin123!");
+                    if (result.Succeeded)
+                    {
+                        await userManager.AddToRoleAsync(adminUser, "SuperAdmin");
+                        await userManager.AddToRoleAsync(adminUser, "Admin");
+                        logger.LogInformation("Admin user created successfully: {Email}", adminEmail);
+                    }
+                    else
+                    {
+                        logger.LogError("Failed to create admin user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
+                    }
+                }
+
+                // Create demo users
+                await CreateDemoUsersAsync(userManager, context, logger);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "An error occurred while seeding roles and admin user.");
+            }
+        }
+
+        private static async Task CreateDemoUsersAsync(UserManager<ApplicationUser> userManager, ApplicationDbContext context, ILogger logger)
+        {
+            try
+            {
+                // Demo users
+                var demoUsers = new[]
+                {
+                    new { Email = "manager@satbe.com", FullName = "John Manager", Role = "Manager", Password = "Manager123!" },
+                    new { Email = "hr@satbe.com", FullName = "Jane HR", Role = "HR", Password = "Hr123!" },
+                    new { Email = "employee@satbe.com", FullName = "Bob Employee", Role = "Employee", Password = "Employee123!" },
+                    new { Email = "user@satbe.com", FullName = "Alice User", Role = "User", Password = "User123!" }
+                };
+
+                foreach (var userData in demoUsers)
+                {
+                    var existingUser = await userManager.FindByEmailAsync(userData.Email);
+                    if (existingUser == null)
+                    {
+                        var user = new ApplicationUser
+                        {
+                            UserName = userData.Email,
+                            Email = userData.Email,
+                            FullName = userData.FullName,
+                            IsActive = true,
+                            CreatedDate = DateTime.UtcNow,
+                            EmailConfirmed = true
+                        };
+
+                        var result = await userManager.CreateAsync(user, userData.Password);
+                        if (result.Succeeded)
+                        {
+                            await userManager.AddToRoleAsync(user, userData.Role);
+                            await userManager.AddToRoleAsync(user, "User"); // All users get basic User role
+                            logger.LogInformation("Demo user created: {Email} with role {Role}", userData.Email, userData.Role);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error creating demo users");
+            }
+        }
+
+        private static async Task SeedRolesAsync(ApplicationDbContext context, ILogger logger)
+        {
+            if (!await context.Roles.AnyAsync())
+            {
+                logger.LogInformation("Seeding basic roles...");
+
+                var roles = new[]
+                {
+                    new ApplicationRole
+                    {
+                        Name = "SuperAdmin",
+                        Description = "Super Administrator with full system access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    },
+                    new ApplicationRole
+                    {
+                        Name = "Admin",
+                        Description = "Administrator with system management access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    },
+                    new ApplicationRole
+                    {
+                        Name = "Manager",
+                        Description = "Manager with team and department access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    },
+                    new ApplicationRole
+                    {
+                        Name = "HR",
+                        Description = "Human Resources with employee management access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    },
+                    new ApplicationRole
+                    {
+                        Name = "Employee",
+                        Description = "Employee with limited access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    },
+                    new ApplicationRole
+                    {
+                        Name = "User",
+                        Description = "Basic user with read-only access",
+                        IsActive = true,
+                        CreatedDate = DateTime.UtcNow
+                    }
+                };
+
+                await context.Roles.AddRangeAsync(roles);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Basic roles seeded successfully.");
             }
         }
 

@@ -6,6 +6,7 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Interfaces
 {
     public interface IAuthService
     {
+        Task<ServiceResult<RegisterResponseDto>> RegisterAsync(RegisterRequestDto request);
         Task<ServiceResult<LoginResponseDto>> LoginAsync(LoginRequestDto request);
         Task<ServiceResult<bool>> LogoutAsync(string userId);
         Task<ServiceResult<LoginResponseDto>> RefreshTokenAsync(string refreshToken);

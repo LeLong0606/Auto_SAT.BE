@@ -9,33 +9,29 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container
 builder.Services.AddControllers();
 
-// Add Infrastructure services (DbContext, Identity, JWT, etc.)
+// Add Infrastructure services (DbContext, Identity, JWT)
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// Add Swagger / OpenAPI configuration
+// Configure API Explorer
 builder.Services.AddEndpointsApiExplorer();
 
+// Configure Swagger/OpenAPI - Fixed for proper OpenAPI 3.0.1 generation
 builder.Services.AddSwaggerGen(options =>
 {
-    // Correct versioning for OpenAPI
+    // Primary OpenAPI document configuration with proper versioning
     options.SwaggerDoc("v1", new OpenApiInfo
     {
+        Version = "v1.0.0",
         Title = "SAT.BE API",
-        Version = "1.0.0", // <- This is the API version, not the OpenAPI version
-        Description = "Staff Attendance Tracking Backend API",
+        Description = "Staff Attendance Tracking Backend API with Authentication",
         Contact = new OpenApiContact
         {
             Name = "SAT.BE Development Team",
             Email = "dev@satbe.com"
-        },
-        License = new OpenApiLicense
-        {
-            Name = "MIT License",
-            Url = new Uri("https://opensource.org/licenses/MIT")
         }
     });
 
-    // JWT Bearer Auth support
+    // JWT Authentication configuration
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -57,22 +53,15 @@ builder.Services.AddSwaggerGen(options =>
                     Id = "Bearer"
                 }
             },
-            Array.Empty<string>()
+            new string[] {}
         }
     });
 
-    // Optional: XML Comments
-    var xmlFilename = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFilename);
-    if (File.Exists(xmlPath))
-    {
-        options.IncludeXmlComments(xmlPath);
-    }
-
+    // Enable annotations for better documentation
     options.EnableAnnotations();
 });
 
-// Add CORS policies
+// Add CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -91,49 +80,59 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Logging
+// Configure logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
 var app = builder.Build();
 
-// DEVELOPMENT ONLY: Swagger, Database Init
+// Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
-
-    // Enable Swagger
-    app.UseSwagger(); // <- This automatically generates JSON with "openapi": "3.0.1"
+    
+    // Swagger configuration - Ensure OpenAPI 3.0.1 format
+    app.UseSwagger(c =>
+    {
+        c.SerializeAsV2 = false; // This ensures OpenAPI 3.0+ format is used
+    });
+    
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("/swagger/v1/swagger.json", "SAT.BE API v1.0.0");
         options.RoutePrefix = "swagger";
-        options.DocumentTitle = "SAT.BE API Documentation";
-        options.DefaultModelsExpandDepth(-1);
-        options.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None);
         options.DisplayRequestDuration();
         options.EnableTryItOutByDefault();
         options.EnableDeepLinking();
+        options.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.None);
+        options.DefaultModelsExpandDepth(-1);
+        options.DocumentTitle = "SAT.BE API Documentation";
     });
 
-    // Auto DB Migration & Seeding
+    // Database initialization
     try
     {
         using var scope = app.Services.CreateScope();
         var services = scope.ServiceProvider;
         var logger = services.GetRequiredService<ILogger<Program>>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        var context = services.GetRequiredService<ApplicationDbContext>();
 
-        logger.LogInformation("Applying migrations...");
-        await dbContext.Database.MigrateAsync();
-        await DbMigrationHelper.SeedDataAsync(dbContext, logger);
-        logger.LogInformation("Database initialized.");
+        logger.LogInformation("Initializing database...");
+        await context.Database.MigrateAsync();
+        
+        // Seed basic data
+        await DbMigrationHelper.SeedDataAsync(context, logger);
+        
+        // Seed roles and admin user
+        await DbMigrationHelper.SeedRolesAndAdminAsync(services, logger);
+        
+        logger.LogInformation("Database initialized successfully.");
     }
     catch (Exception ex)
     {
         var logger = app.Services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Database initialization failed.");
+        logger.LogError(ex, "An error occurred while initializing the database.");
     }
 }
 else
@@ -142,9 +141,11 @@ else
     app.UseHsts();
 }
 
-// Global Middleware
+// Security and CORS middleware
 app.UseHttpsRedirection();
 app.UseCors(app.Environment.IsDevelopment() ? "Development" : "AllowAll");
+
+// Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -156,7 +157,7 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// Controller routing
+// Map controllers
 app.MapControllers();
 
 // Health check endpoint
@@ -170,16 +171,30 @@ app.MapGet("/health", () => Results.Ok(new
 .WithName("HealthCheck")
 .WithTags("Health");
 
-// Root info endpoint
+// Root endpoint
 app.MapGet("/", () => Results.Ok(new
 {
-    message = "SAT.BE API is running successfully!",
+    message = "SAT.BE API with Authentication is running successfully!",
     version = "1.0.0",
     environment = app.Environment.EnvironmentName,
     timestamp = DateTime.UtcNow,
     documentation = "/swagger",
     health = "/health",
-    openApiSpec = "/swagger/v1/swagger.json"
+    openApiSpec = "/swagger/v1/swagger.json",
+    authentication = new
+    {
+        register = "/api/auth/register",
+        login = "/api/auth/login",
+        refreshToken = "/api/auth/refresh-token"
+    },
+    demoAccounts = new
+    {
+        admin = new { email = "admin@satbe.com", password = "Admin123!" },
+        manager = new { email = "manager@satbe.com", password = "Manager123!" },
+        hr = new { email = "hr@satbe.com", password = "Hr123!" },
+        employee = new { email = "employee@satbe.com", password = "Employee123!" },
+        user = new { email = "user@satbe.com", password = "User123!" }
+    }
 }))
 .WithName("ApiRoot")
 .WithTags("Information");
