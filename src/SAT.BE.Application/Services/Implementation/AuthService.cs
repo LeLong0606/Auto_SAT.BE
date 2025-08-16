@@ -55,13 +55,21 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                     return ServiceResult<RegisterResponseDto>.Failure("A user with this email already exists.", 400);
                 }
 
-                // Validate employee if EmployeeId is provided
+                Domain.Entities.HR.Employee? employee = null;
+                string roleToAssign = "User"; // Default role
+
+                // Validate and load employee if EmployeeId is provided
                 if (request.EmployeeId.HasValue)
                 {
-                    var employee = await _context.Employees.FindAsync(request.EmployeeId.Value);
+                    employee = await _context.Employees
+                        .Include(e => e.Department)
+                        .Include(e => e.WorkPosition)
+                        .FirstOrDefaultAsync(e => e.EmployeeId == request.EmployeeId.Value);
+
                     if (employee == null)
                     {
-                        return ServiceResult<RegisterResponseDto>.Failure("Invalid employee ID.", 400);
+                        _logger.LogWarning("Registration failed: Employee ID {EmployeeId} not found", request.EmployeeId.Value);
+                        return ServiceResult<RegisterResponseDto>.Failure("Invalid employee ID. Employee not found.", 400);
                     }
 
                     // Check if employee is already linked to another user
@@ -69,8 +77,12 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                         .FirstOrDefaultAsync(u => u.EmployeeId == request.EmployeeId.Value);
                     if (existingUserWithEmployee != null)
                     {
+                        _logger.LogWarning("Registration failed: Employee {EmployeeId} already linked to user {UserId}", request.EmployeeId.Value, existingUserWithEmployee.Id);
                         return ServiceResult<RegisterResponseDto>.Failure("This employee is already linked to another user.", 400);
                     }
+
+                    // Determine role based on work position level and department leadership
+                    roleToAssign = DetermineRoleFromEmployee(employee);
                 }
 
                 // Create new user
@@ -95,10 +107,25 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                     return ServiceResult<RegisterResponseDto>.Failure($"Registration failed: {errors}", 400);
                 }
 
-                // Assign default role
-                await _userManager.AddToRoleAsync(user, "User");
+                // Assign role based on employee position
+                var roleAssignResult = await _userManager.AddToRoleAsync(user, roleToAssign);
+                if (!roleAssignResult.Succeeded)
+                {
+                    _logger.LogWarning("Failed to assign role {Role} to user {Email}: {Errors}", 
+                        roleToAssign, request.Email, string.Join(", ", roleAssignResult.Errors.Select(e => e.Description)));
+                    // Still continue, user was created successfully
+                }
 
-                _logger.LogInformation("User registered successfully: {Email}", request.Email);
+                // Always assign basic User role
+                if (roleToAssign != "User")
+                {
+                    await _userManager.AddToRoleAsync(user, "User");
+                }
+
+                // Add permissions based on role and employee position
+                await AssignPermissionsToUser(user, roleToAssign, employee);
+
+                _logger.LogInformation("User registered successfully: {Email} with role {Role}", request.Email, roleToAssign);
 
                 var response = new RegisterResponseDto
                 {
@@ -107,7 +134,7 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                     FullName = user.FullName,
                     IsActive = user.IsActive,
                     CreatedDate = user.CreatedDate,
-                    Message = "Registration successful"
+                    Message = $"Registration successful with role: {roleToAssign}"
                 };
 
                 return ServiceResult<RegisterResponseDto>.Success(response, "User registered successfully.");
@@ -116,6 +143,127 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
             {
                 _logger.LogError(ex, "An error occurred during registration for email: {Email}", request.Email);
                 return ServiceResult<RegisterResponseDto>.Failure("An internal server error occurred during registration.", 500);
+            }
+        }
+
+        private string DetermineRoleFromEmployee(Domain.Entities.HR.Employee employee)
+        {
+            // Check if employee is a department leader
+            var isLeader = _context.Departments.Any(d => d.LeaderId == employee.EmployeeId);
+            
+            if (isLeader)
+            {
+                return "Manager"; // Department leaders get Manager role
+            }
+
+            // Determine role based on work position level
+            return employee.WorkPosition.Level switch
+            {
+                1 => "Employee", // Level 1: Basic employee
+                2 => "Employee", // Level 2: Senior employee
+                3 => "TeamLeader", // Level 3: Team leader
+                4 => "Director", // Level 4: Director
+                5 => "Manager", // Level 5: Manager
+                _ => "Employee" // Default to employee
+            };
+        }
+
+        private async Task AssignPermissionsToUser(ApplicationUser user, string role, Domain.Entities.HR.Employee? employee)
+        {
+            var claims = new List<Claim>();
+
+            // Add employee-specific claims if available
+            if (employee != null)
+            {
+                claims.Add(new Claim("EmployeeId", employee.EmployeeId.ToString()));
+                claims.Add(new Claim("DepartmentId", employee.DepartmentId.ToString()));
+                claims.Add(new Claim("WorkPositionId", employee.WorkPositionId.ToString()));
+                claims.Add(new Claim("PositionLevel", employee.WorkPosition.Level.ToString()));
+            }
+
+            // Add role-specific permissions as claims
+            switch (role)
+            {
+                case "SuperAdmin":
+                case "Admin":
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_CREATE),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_UPDATE),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_DELETE),
+                        new Claim("Permission", PermissionConstants.DEPARTMENT_VIEW),
+                        new Claim("Permission", PermissionConstants.DEPARTMENT_MANAGE_ALL),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_CREATE),
+                        new Claim("Permission", PermissionConstants.USER_MANAGEMENT),
+                        new Claim("Permission", PermissionConstants.ROLE_MANAGEMENT)
+                    });
+                    break;
+
+                case "Director":
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_CREATE),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_UPDATE),
+                        new Claim("Permission", PermissionConstants.DEPARTMENT_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_CREATE)
+                    });
+                    break;
+
+                case "Manager":
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_UPDATE),
+                        new Claim("Permission", PermissionConstants.DEPARTMENT_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_CREATE)
+                    });
+                    break;
+
+                case "TeamLeader":
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_CREATE)
+                    });
+                    break;
+
+                case "HR":
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_CREATE),
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_UPDATE),
+                        new Claim("Permission", PermissionConstants.DEPARTMENT_VIEW),
+                        new Claim("Permission", PermissionConstants.USER_MANAGEMENT)
+                    });
+                    break;
+
+                case "Employee":
+                case "User":
+                default:
+                    claims.AddRange(new[]
+                    {
+                        new Claim("Permission", PermissionConstants.EMPLOYEE_VIEW),
+                        new Claim("Permission", PermissionConstants.SCHEDULE_VIEW)
+                    });
+                    break;
+            }
+
+            // Add all claims to user
+            foreach (var claim in claims)
+            {
+                var result = await _userManager.AddClaimAsync(user, claim);
+                if (!result.Succeeded)
+                {
+                    _logger.LogWarning("Failed to add claim {ClaimType}:{ClaimValue} to user {UserId}", 
+                        claim.Type, claim.Value, user.Id);
+                }
             }
         }
 
@@ -149,9 +297,10 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                     return ServiceResult<LoginResponseDto>.Failure("Invalid username or password.", 401);
                 }
 
-                // Get user roles
+                // Get user roles and claims (permissions)
                 var roles = await _userManager.GetRolesAsync(user);
                 var claims = await _userManager.GetClaimsAsync(user);
+                var permissions = claims.Where(c => c.Type == "Permission").Select(c => c.Value).ToList();
 
                 // Generate tokens
                 var accessToken = _jwtTokenService.GenerateAccessToken(user, roles);
@@ -186,7 +335,15 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                 await _context.SaveChangesAsync();
 
                 // Load employee information if available
-                await _context.Entry(user).Reference(u => u.Employee).LoadAsync();
+                if (user.EmployeeId.HasValue)
+                {
+                    await _context.Entry(user).Reference(u => u.Employee).LoadAsync();
+                    if (user.Employee != null)
+                    {
+                        await _context.Entry(user.Employee).Reference(e => e.Department).LoadAsync();
+                        await _context.Entry(user.Employee).Reference(e => e.WorkPosition).LoadAsync();
+                    }
+                }
 
                 var response = new LoginResponseDto
                 {
@@ -199,13 +356,13 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                         Username = user.UserName ?? "",
                         Email = user.Email ?? "",
                         FirstName = user.FullName.Split(' ').FirstOrDefault() ?? "",
-                        LastName = user.FullName.Split(' ').Skip(1).FirstOrDefault() ?? "",
+                        LastName = string.Join(" ", user.FullName.Split(' ').Skip(1)),
                         Roles = roles.ToList(),
-                        Permissions = claims.Select(c => c.Value).ToList()
+                        Permissions = permissions
                     }
                 };
 
-                _logger.LogInformation("Login successful for user: {Username}", request.Username);
+                _logger.LogInformation("Login successful for user: {Username} with roles: {Roles}", request.Username, string.Join(", ", roles));
                 return ServiceResult<LoginResponseDto>.Success(response, "Login successful.");
             }
             catch (Exception ex)
@@ -272,9 +429,10 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                     return ServiceResult<LoginResponseDto>.Failure("Account is disabled.", 401);
                 }
 
-                // Get user roles
+                // Get user roles and permissions
                 var roles = await _userManager.GetRolesAsync(user);
                 var claims = await _userManager.GetClaimsAsync(user);
+                var permissions = claims.Where(c => c.Type == "Permission").Select(c => c.Value).ToList();
 
                 // Generate new tokens
                 var newAccessToken = _jwtTokenService.GenerateAccessToken(user, roles);
@@ -307,9 +465,9 @@ namespace SAT.BE.src.SAT.BE.Application.Services.Implementation
                         Username = user.UserName ?? "",
                         Email = user.Email ?? "",
                         FirstName = user.FullName.Split(' ').FirstOrDefault() ?? "",
-                        LastName = user.FullName.Split(' ').Skip(1).FirstOrDefault() ?? "",
+                        LastName = string.Join(" ", user.FullName.Split(' ').Skip(1)),
                         Roles = roles.ToList(),
-                        Permissions = claims.Select(c => c.Value).ToList()
+                        Permissions = permissions
                     }
                 };
 

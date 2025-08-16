@@ -73,8 +73,8 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
 
                 logger.LogInformation("Starting roles and admin user seeding...");
 
-                // Create roles
-                var roles = new[] { "SuperAdmin", "Admin", "Manager", "HR", "Employee", "User" };
+                // Create roles with hierarchy
+                var roles = new[] { "SuperAdmin", "Admin", "Director", "Manager", "TeamLeader", "HR", "Employee", "User" };
 
                 foreach (var roleName in roles)
                 {
@@ -84,7 +84,7 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
                         var role = new ApplicationRole
                         {
                             Name = roleName,
-                            Description = $"{roleName} role with appropriate permissions",
+                            Description = GetRoleDescription(roleName),
                             IsActive = true,
                             CreatedDate = DateTime.UtcNow
                         };
@@ -130,8 +130,11 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
                     }
                 }
 
-                // Create demo users
+                // Create demo users with proper roles
                 await CreateDemoUsersAsync(userManager, context, logger);
+
+                // Seed demo employees first so they can be linked to users
+                await SeedDemoEmployees(context, logger);
             }
             catch (Exception ex)
             {
@@ -139,14 +142,32 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
             }
         }
 
+        private static string GetRoleDescription(string roleName)
+        {
+            return roleName switch
+            {
+                "SuperAdmin" => "Super Administrator with full system access",
+                "Admin" => "Administrator with system management access",
+                "Director" => "Director with full departmental access and can create shifts for all employees",
+                "Manager" => "Manager with departmental access and team management",
+                "TeamLeader" => "Team Leader who can view team members and assign shifts to team members only",
+                "HR" => "Human Resources with employee management access",
+                "Employee" => "Employee with limited access to personal data and schedules",
+                "User" => "Basic user with read-only access",
+                _ => $"{roleName} role with appropriate permissions"
+            };
+        }
+
         private static async Task CreateDemoUsersAsync(UserManager<ApplicationUser> userManager, ApplicationDbContext context, ILogger logger)
         {
             try
             {
-                // Demo users
+                // Demo users with proper role hierarchy
                 var demoUsers = new[]
                 {
+                    new { Email = "director@satbe.com", FullName = "Robert Director", Role = "Director", Password = "Director123!" },
                     new { Email = "manager@satbe.com", FullName = "John Manager", Role = "Manager", Password = "Manager123!" },
+                    new { Email = "teamleader@satbe.com", FullName = "Sarah TeamLeader", Role = "TeamLeader", Password = "TeamLeader123!" },
                     new { Email = "hr@satbe.com", FullName = "Jane HR", Role = "HR", Password = "Hr123!" },
                     new { Email = "employee@satbe.com", FullName = "Bob Employee", Role = "Employee", Password = "Employee123!" },
                     new { Email = "user@satbe.com", FullName = "Alice User", Role = "User", Password = "User123!" }
@@ -180,6 +201,83 @@ namespace SAT.BE.src.SAT.BE.Infrastructure.Data
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error creating demo users");
+            }
+        }
+
+        private static async Task SeedDemoEmployees(ApplicationDbContext context, ILogger logger)
+        {
+            try
+            {
+                if (!await context.Employees.AnyAsync())
+                {
+                    logger.LogInformation("Seeding demo employees...");
+
+                    // Ensure we have departments and work positions
+                    var itDepartment = await context.Departments.FirstOrDefaultAsync(d => d.DepartmentCode == "IT");
+                    var hrDepartment = await context.Departments.FirstOrDefaultAsync(d => d.DepartmentCode == "HR");
+                    var finDepartment = await context.Departments.FirstOrDefaultAsync(d => d.DepartmentCode == "FIN");
+
+                    var devPosition = await context.WorkPositions.FirstOrDefaultAsync(w => w.PositionCode == "DEV");
+                    var pmPosition = await context.WorkPositions.FirstOrDefaultAsync(w => w.PositionCode == "PM");
+                    var tlPosition = await context.WorkPositions.FirstOrDefaultAsync(w => w.PositionCode == "TL");
+
+                    if (itDepartment != null && devPosition != null && pmPosition != null && tlPosition != null)
+                    {
+                        var employees = new[]
+                        {
+                            new Domain.Entities.HR.Employee
+                            {
+                                EmployeeCode = "EMP001",
+                                FullName = "John Developer",
+                                DateOfBirth = new DateTime(1990, 1, 15),
+                                Email = "john.dev@satbe.com",
+                                PhoneNumber = "+1234567890",
+                                DepartmentId = itDepartment.DepartmentId,
+                                WorkPositionId = devPosition.WorkPositionId,
+                                IsActive = true,
+                                CreatedDate = DateTime.UtcNow
+                            },
+                            new Domain.Entities.HR.Employee
+                            {
+                                EmployeeCode = "EMP002",
+                                FullName = "Sarah TeamLeader",
+                                DateOfBirth = new DateTime(1988, 3, 20),
+                                Email = "sarah.tl@satbe.com",
+                                PhoneNumber = "+1234567891",
+                                DepartmentId = itDepartment.DepartmentId,
+                                WorkPositionId = tlPosition.WorkPositionId,
+                                IsActive = true,
+                                CreatedDate = DateTime.UtcNow
+                            },
+                            new Domain.Entities.HR.Employee
+                            {
+                                EmployeeCode = "EMP003",
+                                FullName = "Robert Director",
+                                DateOfBirth = new DateTime(1985, 7, 10),
+                                Email = "robert.dir@satbe.com",
+                                PhoneNumber = "+1234567892",
+                                DepartmentId = itDepartment.DepartmentId,
+                                WorkPositionId = pmPosition.WorkPositionId,
+                                IsActive = true,
+                                CreatedDate = DateTime.UtcNow
+                            }
+                        };
+
+                        await context.Employees.AddRangeAsync(employees);
+                        await context.SaveChangesAsync();
+
+                        // Make Sarah TeamLeader the leader of IT department
+                        var sarahEmployee = employees.First(e => e.EmployeeCode == "EMP002");
+                        itDepartment.LeaderId = sarahEmployee.EmployeeId;
+                        await context.SaveChangesAsync();
+
+                        logger.LogInformation("Demo employees seeded successfully");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error seeding demo employees");
             }
         }
 
