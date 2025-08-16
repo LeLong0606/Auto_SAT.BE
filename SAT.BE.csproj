@@ -33,6 +33,7 @@
     <Folder Include="src\SAT.BE.Application\" />
     <Folder Include="src\SAT.BE.Api\Controllers\Auth\" />
     <Folder Include="src\SAT.BE.Api\Controllers\Users\" />
+    <Folder Include="src\SAT.BE.Infrastructure\Data\Migrations\" />
   </ItemGroup>
 
 </Project>
