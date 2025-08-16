@@ -13,6 +13,18 @@ namespace SAT.BE.src.SAT.BE.Domain.Entities.HR
         [Required, MaxLength(255)]
         public string PositionName { get; set; } = default!;
 
-        public ICollection<Employee> Employees { get; set; } = new List<Employee>();
+        [MaxLength(500)]
+        public string? Description { get; set; }
+
+        public int Level { get; set; } = 1; // 1: Staff, 2: Leader, 3: Manager, 4: Director
+
+        public decimal? BaseSalary { get; set; }
+
+        public bool IsActive { get; set; } = true;
+
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+
+        // Navigation properties
+        public virtual ICollection<Employee> Employees { get; set; } = new List<Employee>();
     }
 }

@@ -13,7 +13,13 @@ namespace SAT.BE.src.SAT.BE.Domain.Entities.Identity
         public Employee Employee { get; set; } = default!;
 
         [Required]
+        public int UserId { get; set; }
+        public ApplicationUser User { get; set; } = default!;
+
+        [Required]
         public int RoleId { get; set; }
-        public Role Role { get; set; } = default!;
+        public ApplicationRole Role { get; set; } = default!;
+
+        public DateTime AssignedDate { get; set; } = DateTime.UtcNow;
     }
 }

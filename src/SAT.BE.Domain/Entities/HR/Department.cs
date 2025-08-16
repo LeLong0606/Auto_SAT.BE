@@ -1,5 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using SAT.BE.src.SAT.BE.Domain.Entities.Identity;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace SAT.BE.src.SAT.BE.Domain.Entities.HR
 {
@@ -16,11 +16,19 @@ namespace SAT.BE.src.SAT.BE.Domain.Entities.HR
 
         public string? Description { get; set; }
 
-        // Tổ trưởng
-        public int? LeaderId { get; set; }
-        public Employee? Leader { get; set; }
+        public bool IsActive { get; set; } = true;
 
-        // Navigation
-        public ICollection<Employee> Employees { get; set; } = new List<Employee>();
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+
+        public DateTime? ModifiedDate { get; set; }
+
+        // Foreign key for Leader
+        public int? LeaderId { get; set; }
+
+        // Navigation properties
+        [ForeignKey("LeaderId")]
+        public virtual Employee? Leader { get; set; }
+
+        public virtual ICollection<Employee> Employees { get; set; } = new List<Employee>();
     }
 }

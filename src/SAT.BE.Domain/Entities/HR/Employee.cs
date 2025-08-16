@@ -1,4 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using SAT.BE.src.SAT.BE.Domain.Entities.Identity;
 using SAT.BE.src.SAT.BE.Domain.Entities.Scheduling;
 
 namespace SAT.BE.src.SAT.BE.Domain.Entities.HR
@@ -23,17 +25,34 @@ namespace SAT.BE.src.SAT.BE.Domain.Entities.HR
         [MaxLength(20)]
         public string? PhoneNumber { get; set; }
 
-        // Quan hệ phòng ban
+        public bool IsActive { get; set; } = true;
+
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+
+        public DateTime? ModifiedDate { get; set; }
+
+        // Foreign keys
         [Required]
         public int DepartmentId { get; set; }
-        public Department Department { get; set; } = default!;
 
-        // Vị trí làm việc
+        [Required]
         public int WorkPositionId { get; set; }
-        public WorkPosition WorkPosition { get; set; } = default!;
 
-        // Navigation
-        public ICollection<ShiftAssignment> ShiftAssignments { get; set; } = new List<ShiftAssignment>();
-        public ICollection<TaskAssignment> TaskAssignments { get; set; } = new List<TaskAssignment>();
+        // Navigation properties
+        [ForeignKey("DepartmentId")]
+        public virtual Department Department { get; set; } = default!;
+
+        [ForeignKey("WorkPositionId")]
+        public virtual WorkPosition WorkPosition { get; set; } = default!;
+
+        // One-to-One relationship with ApplicationUser
+        public virtual ApplicationUser? User { get; set; }
+
+        // One-to-Many relationships
+        public virtual ICollection<ShiftAssignment> ShiftAssignments { get; set; } = new List<ShiftAssignment>();
+        public virtual ICollection<EmployeeTaskAssignment> EmployeeTaskAssignments { get; set; } = new List<EmployeeTaskAssignment>();
+
+        // Self-referencing relationship for Department Leader
+        public virtual ICollection<Department> LeadingDepartments { get; set; } = new List<Department>();
     }
 }
