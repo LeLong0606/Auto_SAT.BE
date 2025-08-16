@@ -1,6 +1,14 @@
+using SAT.BE.src.SAT.BE.Infrastructure.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+
+// Add database and identity services
+builder.Services.AddDatabase(builder.Configuration);
+builder.Services.AddIdentityServices();
+builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddApplicationServices();
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -18,6 +26,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Add authentication and authorization middleware
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
